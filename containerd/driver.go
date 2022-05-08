@@ -23,6 +23,11 @@ import (
 	"syscall"
 	"time"
 
+	"os/exec"
+	"os"
+	"strings"
+	"encoding/json"
+
 	"github.com/containerd/containerd"
 	"github.com/containerd/containerd/namespaces"
 	"github.com/hashicorp/consul-template/signals"
@@ -88,6 +93,19 @@ var (
 			"username": hclspec.NewAttr("username", "string", true),
 			"password": hclspec.NewAttr("password", "string", true),
 		})),
+
+		"nix_executable": hclspec.NewDefault(
+			hclspec.NewAttr("nix_executable", "string", false),
+			hclspec.NewLiteral(`"nix"`),
+		),
+		"gc_roots_root": hclspec.NewDefault(
+			hclspec.NewAttr("gc_roots_root", "string", false),
+			hclspec.NewLiteral(`"/nix/var/nix/gcroots/containerd-nix"`),
+		),
+		"rootfs_root": hclspec.NewDefault(
+			hclspec.NewAttr("rootfs_root", "string", false),
+			hclspec.NewLiteral(`"/var/containerd-nix/rootfs"`),
+		),
 	})
 
 	// taskConfigSpec is the specification of the plugin's configuration for
@@ -95,7 +113,10 @@ var (
 	// this is used to validate the configuration specified for the plugin
 	// when a job is submitted.
 	taskConfigSpec = hclspec.NewObject(map[string]*hclspec.Spec{
-		"image":      hclspec.NewAttr("image", "string", true),
+		// "image":      hclspec.NewAttr("image", "string", true),
+		"flake_ref":  hclspec.NewAttr("flake_ref", "string", true),
+		"flake_sha":  hclspec.NewAttr("flake_sha", "string", false),
+
 		"command":    hclspec.NewAttr("command", "string", false),
 		"args":       hclspec.NewAttr("args", "list(string)", false),
 		"cap_add":    hclspec.NewAttr("cap_add", "list(string)", false),
@@ -155,6 +176,10 @@ type Config struct {
 	StatsInterval     string       `codec:"stats_interval"`
 	AllowPrivileged   bool         `codec:"allow_privileged"`
 	Auth              RegistryAuth `codec:"auth"`
+
+	NixExecutable     string       `codec:"nix_executable"`
+	GCRootsRoot       string       `codec:"gc_roots_root"`
+	RootFSRoot        string       `codec:"rootfs_root"`
 }
 
 // Volume, bind, and tmpfs type mounts are supported.
@@ -175,7 +200,9 @@ type RegistryAuth struct {
 // TaskConfig contains configuration information for a task that runs with
 // this plugin
 type TaskConfig struct {
-	Image            string             `codec:"image"`
+	FlakeRef         string             `codec:"flake_ref"`
+	FlakeSha         string             `codec:"flake_sha"`
+
 	Command          string             `codec:"command"`
 	Args             []string           `codec:"args"`
 	CapAdd           []string           `codec:"cap_add"`
@@ -403,6 +430,162 @@ func (d *Driver) buildFingerprint() *drivers.Fingerprint {
 	return fp
 }
 
+func (d *Driver) NixGetDeps(executable string, flakeRef string) ([]string, error) {
+	nixDepsCmd := &exec.Cmd {
+		Path: executable,
+		Args: []string{
+			executable,
+			"path-info",
+			"-r",
+			flakeRef,
+		},
+	}
+	res, err := nixDepsCmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get dependencies of built flake-ref %s", flakeRef)
+	}
+	deps := strings.Split(strings.Trim(string(res), " \n"), "\n")
+
+	return deps, nil
+}
+
+func (d *Driver) NixBuildFlake(executable string, flakeRef string, flakeSha string) error {
+	flakeHost := strings.Split(flakeRef, "#")
+
+	if len(flakeHost) != 2 {
+		return fmt.Errorf("Invalid flake ref.")
+	}
+
+	nixShaCmd := &exec.Cmd {
+		Path: executable,
+		Args: []string{
+			executable,
+			"flake",
+			"metadata",
+			"--json",
+			flakeHost[0],
+		},
+	}
+	nixSha, err := nixShaCmd.Output()
+	if err != nil {
+		return fmt.Errorf("failed to get sha for flake-ref %s with %s:\n %s", flakeRef, err, string(nixSha))
+	}
+
+	var shaJson map[string]interface{}
+	err = json.Unmarshal(nixSha, &shaJson)
+
+	if err != nil {
+		return fmt.Errorf("failed to parse json %s", err)
+	}
+
+	lockedVal, ok := shaJson["locked"].(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("failed to parse `nix flake metadata` output")
+	}
+	fetchedSha, ok := lockedVal["narHash"].(string)
+	if !ok {
+		return fmt.Errorf("failed to parse `nix flake metadata` output")
+	}
+
+	if string(fetchedSha) != flakeSha {
+		return fmt.Errorf("pinned flake sha doesn't match: \"%s\" != \"%s\"", flakeSha, fetchedSha)
+	}
+
+	nixBuildCmd := &exec.Cmd {
+		Path: executable,
+		Args: []string{
+			executable,
+			"build",
+			"--no-link",
+			flakeRef,
+		},
+	}
+	res, err := nixBuildCmd.Output()
+	if err != nil {
+		return fmt.Errorf("failed to build flake-ref %s with %s:\n %s", flakeRef, err, string(res))
+	}
+
+	return nil
+}
+
+func (d *Driver) NixGetStorePath(executable string, flakeRef string) (string, error) {
+	nixEvalCmd := exec.Cmd {
+		Path: executable,
+		Args: []string{
+			executable,
+			"eval",
+			"--raw",
+			flakeRef + ".outPath",
+		},
+	}
+
+	storePath, err := nixEvalCmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("failed to get store path of %s", flakeRef)
+	}
+	return string(storePath), nil
+}
+
+func (d *Driver) GetGCRoot(containerName string, allocationId string) string {
+	return fmt.Sprintf("%s/%s-%s", d.config.GCRootsRoot, containerName, allocationId)
+}
+
+func (d *Driver) GetRootFSPath(containerName string, allocationId string) string {
+	return fmt.Sprintf("%s/%s-%s", d.config.RootFSRoot, containerName, allocationId)
+}
+
+func (d *Driver) SetupRootFS(flakeRef string, containerName string, allocationId string, flakeSha string) (string, string, error) {
+	nixExecutable, err := exec.LookPath("nix")
+	if err != nil {
+		return "", "", fmt.Errorf("failed to find `nix` executable")
+	}
+
+	err = d.NixBuildFlake(nixExecutable, flakeRef, flakeSha)
+	if err != nil {
+		return "", "", err
+	}
+
+	deps, err := d.NixGetDeps(nixExecutable, flakeRef)
+	if err != nil {
+		return "", "", err
+	}
+
+	rootFS := d.GetRootFSPath(containerName, allocationId)
+	os.MkdirAll(rootFS, 0755)
+
+	for _, dep := range deps {
+		target := fmt.Sprintf("%s%s", rootFS, dep)
+
+		info, err := os.Stat(dep)
+		if os.IsNotExist(err) {
+			return "", "", fmt.Errorf("store path reported as dep but does no exist %s: %s", dep, err)
+		}
+		if info.IsDir() {
+			os.MkdirAll(target, 0755)
+		} else {
+			os.Create(target)
+		}
+
+		err32 := syscall.Mount(dep, target, "", syscall.MS_BIND, "")
+		if err32 != nil {
+			return "", "", fmt.Errorf("failed to bind mount store path %s: %v", dep, err)
+		}
+	}
+
+	storePath, err := d.NixGetStorePath(nixExecutable, flakeRef)
+	if err != nil {
+		return "", "", err
+	}
+
+	// Create GC-Root
+	gcRoot := d.GetGCRoot(containerName, allocationId)
+	os.MkdirAll(d.config.GCRootsRoot, 0755)
+
+	os.Symlink(storePath, gcRoot)
+
+	return rootFS, deps[len(deps)-1], nil
+}
+
 // StartTask returns a task handle and a driver network if necessary.
 func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drivers.DriverNetwork, error) {
 	if _, ok := d.tasks.Get(cfg.ID); ok {
@@ -432,13 +615,20 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 	containerName := cfg.Name + "-" + cfg.AllocID
 	containerConfig.ContainerName = containerName
 
-	var err error
-	containerConfig.Image, err = d.pullImage(driverConfig.Image, driverConfig.ImagePullTimeout, &driverConfig.Auth)
-	if err != nil {
-		return nil, nil, fmt.Errorf("Error in pulling image %s: %v", driverConfig.Image, err)
-	}
+	// var err error
+	// containerConfig.Image, err = d.pullImage(driverConfig.Image, driverConfig.ImagePullTimeout, &driverConfig.Auth)
+	// if err != nil {
+	//	return nil, nil, fmt.Errorf("Error in pulling image %s: %v", driverConfig.Image, err)
+	// }
 
-	d.logger.Info(fmt.Sprintf("Successfully pulled %s image\n", containerConfig.Image.Name()))
+	var err error
+	rootFSPath, mainStorePath, err := d.SetupRootFS(driverConfig.FlakeRef, cfg.Name, cfg.AllocID, driverConfig.FlakeSha)
+	if err != nil {
+		return nil, nil, fmt.Errorf("Error in building rootfs from flake-ref %s: %v", driverConfig.FlakeRef, err)
+	}
+	containerConfig.RootFSPath = rootFSPath
+
+	d.logger.Info(fmt.Sprintf("Successfully created rootfs from %s flake-ref\n", driverConfig.FlakeRef))
 
 	// Setup environment variables.
 	for key, val := range cfg.Env {
@@ -471,7 +661,7 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 
 	containerConfig.User = cfg.User
 
-	container, err := d.createContainer(&containerConfig, &driverConfig)
+	container, err := d.createContainer(&containerConfig, &driverConfig, mainStorePath)
 	if err != nil {
 		return nil, nil, fmt.Errorf("Error in creating container: %v", err)
 	}
@@ -634,6 +824,37 @@ func (d *Driver) StopTask(taskID string, timeout time.Duration, signal string) e
 	if err := handle.shutdown(d.ctxContainerd, timeout, syscall.SIGTERM); err != nil {
 		return fmt.Errorf("Shutdown failed: %v", err)
 	}
+
+	var driverConfig TaskConfig
+	if err := handle.taskConfig.DecodeDriverConfig(&driverConfig); err != nil {
+		return fmt.Errorf("failed to decode driver config: %v", err)
+	}
+
+	nixExecutable, err := exec.LookPath("nix")
+	if err != nil {
+		return fmt.Errorf("failed to find `nix` executable")
+	}
+
+	deps, err := d.NixGetDeps(nixExecutable, driverConfig.FlakeRef)
+	if err != nil {
+		return err
+	}
+
+	rootFSPath := d.GetRootFSPath(handle.taskConfig.Name, handle.taskConfig.AllocID)
+
+	for _, dep := range deps {
+		err := syscall.Unmount(rootFSPath + "/" + dep, 0)
+		if err != nil {
+			return err
+		}
+	}
+
+
+	// os.RemoveAll(rootFSPath)
+
+	// gcRoot := d.GetGCRoot(handle.taskConfig.Name, handle.taskConfig.AllocID)
+
+	// os.Remove(gcRoot)
 
 	return nil
 }
