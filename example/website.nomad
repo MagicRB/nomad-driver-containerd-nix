@@ -2,13 +2,13 @@ job "hello" {
   datacenters = ["dc1"]
 
   group "hello-group" {
-    # network {
-    #   mode = "bridge"
-    #   port "http" {
-    # 	static = 80
-    # 	to = 80
-    #   }
-    # }
+    network {
+      mode = "bridge"
+      port "http" {
+    	static = 80
+    	to = 80
+      }
+    }
     task "hello-task" {
       driver = "containerd-driver"
 
