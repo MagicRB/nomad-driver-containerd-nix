@@ -35,7 +35,7 @@ import (
 )
 
 type ContainerConfig struct {
-	Image                 containerd.Image
+	RootFSPath            string
 	ContainerName         string
 	ContainerSnapshotName string
 	NetworkNamespacePath  string
@@ -115,7 +115,7 @@ func (d *Driver) pullImage(imageName, imagePullTimeout string, auth *RegistryAut
 	return d.client.Pull(ctxWithTimeout, named.String(), pullOpts...)
 }
 
-func (d *Driver) createContainer(containerConfig *ContainerConfig, config *TaskConfig) (containerd.Container, error) {
+func (d *Driver) createContainer(containerConfig *ContainerConfig, config *TaskConfig, mainStorePath string) (containerd.Container, error) {
 	if config.Command != "" && config.Entrypoint != nil {
 		return nil, fmt.Errorf("Both command and entrypoint are set. Only one of them needs to be set.")
 	}
@@ -123,8 +123,9 @@ func (d *Driver) createContainer(containerConfig *ContainerConfig, config *TaskC
 	// Entrypoint or Command set by the user, to override entrypoint or cmd defined in the image.
 	var args []string
 	if config.Command != "" {
-		args = append(args, config.Command)
+		args = append(args, mainStorePath + "/" + config.Command)
 	} else if config.Entrypoint != nil && config.Entrypoint[0] != "" {
+		config.Entrypoint[0] = mainStorePath + "/" + config.Entrypoint[0]
 		args = append(args, config.Entrypoint...)
 	}
 
@@ -136,13 +137,13 @@ func (d *Driver) createContainer(containerConfig *ContainerConfig, config *TaskC
 	var opts []oci.SpecOpts
 
 	if config.Entrypoint != nil {
-		opts = append(opts, oci.WithImageConfig(containerConfig.Image))
+		// opts = append(opts, oci.WithImageConfig(containerConfig.Image))
 		// WithProcessArgs replaces the args on the generated spec.
 		opts = append(opts, oci.WithProcessArgs(args...))
 	} else {
 		// WithImageConfigArgs configures the spec to from the configuration of an Image
 		// with additional args that replaces the CMD of the image.
-		opts = append(opts, oci.WithImageConfigArgs(containerConfig.Image, args))
+		// opts = append(opts, oci.WithImageConfigArgs(containerConfig.Image, args))
 	}
 
 	if !d.config.AllowPrivileged && config.Privileged {
@@ -336,11 +337,13 @@ func (d *Driver) createContainer(containerConfig *ContainerConfig, config *TaskC
 	ctxWithTimeout, cancel := context.WithTimeout(d.ctxContainerd, 30*time.Second)
 	defer cancel()
 
+	opts = append(opts, oci.WithRootFSPath(containerConfig.RootFSPath))
+
 	return d.client.NewContainer(
 		ctxWithTimeout,
 		containerConfig.ContainerName,
 		containerd.WithRuntime(d.config.ContainerdRuntime, nil),
-		containerd.WithNewSnapshot(containerConfig.ContainerSnapshotName, containerConfig.Image),
+		//containerd.WithNewSnapshot(containerConfig.ContainerSnapshotName, containerConfig.Image),
 		containerd.WithNewSpec(opts...),
 	)
 }
