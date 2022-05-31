@@ -20,6 +20,17 @@
             { default = pkgs.nomad-driver-containerd-nix;
             }
         );
+
+        devShell = forAllSystems (
+          system:
+          let pkgs = pkgsForSystem system;
+          in
+            pkgs.mkShell {
+              nativeBuildInputs = with pkgs;
+                [ nomad
+                ];
+            }
+        );
         
         overlay = final: prev:
           {
