@@ -862,11 +862,11 @@ func (d *Driver) StopTask(taskID string, timeout time.Duration, signal string) e
 	}
 
 
-	// os.RemoveAll(rootFSPath)
+	os.RemoveAll(rootFSPath)
 
-	// gcRoot := d.GetGCRoot(handle.taskConfig.Name, handle.taskConfig.AllocID)
+	gcRoot := d.GetGCRoot(handle.taskConfig.Name, handle.taskConfig.AllocID)
 
-	// os.Remove(gcRoot)
+	os.Remove(gcRoot)
 
 	return nil
 }
