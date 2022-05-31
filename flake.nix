@@ -28,6 +28,7 @@
             pkgs.mkShell {
               nativeBuildInputs = with pkgs;
                 [ nomad
+                  go
                 ];
             }
         );
