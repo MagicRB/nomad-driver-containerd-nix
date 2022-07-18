@@ -114,47 +114,47 @@ func (d *Driver) GetRootFSPath(containerName string, allocationId string) string
 	return fmt.Sprintf("%s/%s-%s", d.config.RootFSRoot, containerName, allocationId)
 }
 
-func (d *Driver) SetupRootFS(flakeRef string, containerName string, allocationId string, flakeSha string) (string, string, error) {
+func (d *Driver) SetupRootFS(flakeRef string, containerName string, allocationId string, flakeSha string) (string, string, []string, error) {
 	nixExecutable, err := exec.LookPath("nix")
 	if err != nil {
-		return "", "", fmt.Errorf("failed to find `nix` executable")
+		return "", "", nil, fmt.Errorf("failed to find `nix` executable")
 	}
 
 	err = d.NixBuildFlake(nixExecutable, flakeRef, flakeSha)
 	if err != nil {
-		return "", "", err
+		return "", "", nil, err
 	}
 
 	deps, err := d.NixGetDeps(nixExecutable, flakeRef)
 	if err != nil {
-		return "", "", err
+		return "", "", nil, err
 	}
 
 	rootFS := d.GetRootFSPath(containerName, allocationId)
 	os.MkdirAll(rootFS, 0755)
 
-	for _, dep := range deps {
-		target := fmt.Sprintf("%s%s", rootFS, dep)
+	// for _, dep := range deps {
+	// 	target := fmt.Sprintf("%s%s", rootFS, dep)
 
-		info, err := os.Stat(dep)
-		if os.IsNotExist(err) {
-			return "", "", fmt.Errorf("store path reported as dep but does no exist %s: %s", dep, err)
-		}
-		if info.IsDir() {
-			os.MkdirAll(target, 0755)
-		} else {
-			os.Create(target)
-		}
+	// 	info, err := os.Stat(dep)
+	// 	if os.IsNotExist(err) {
+	// 		return "", "", fmt.Errorf("store path reported as dep but does no exist %s: %s", dep, err)
+	// 	}
+	// 	if info.IsDir() {
+	// 		os.MkdirAll(target, 0755)
+	// 	} else {
+	// 		os.Create(target)
+	// 	}
 
-		err32 := syscall.Mount(dep, target, "", syscall.MS_BIND, "")
-		if err32 != nil {
-			return "", "", fmt.Errorf("failed to bind mount store path %s: %v", dep, err)
-		}
-	}
+	// 	err32 := syscall.Mount(dep, target, "", syscall.MS_BIND, "")
+	// 	if err32 != nil {
+	// 		return "", "", fmt.Errorf("failed to bind mount store path %s: %v", dep, err)
+	// 	}
+	// }
 
 	storePath, err := d.NixGetStorePath(nixExecutable, flakeRef)
 	if err != nil {
-		return "", "", err
+		return "", "", nil, err
 	}
 
 	// Create GC-Root
@@ -163,7 +163,7 @@ func (d *Driver) SetupRootFS(flakeRef string, containerName string, allocationId
 
 	os.Symlink(storePath, gcRoot)
 
-	return rootFS, deps[len(deps)-1], nil
+	return rootFS, deps[len(deps)-1], deps, nil
 }
 
 func (d *Driver) DestroyRootFS(driverConfig *TaskConfig, taskConfig *drivers.TaskConfig) error {
