@@ -461,11 +461,20 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 	// }
 
 	var err error
-	rootFSPath, mainStorePath, err := d.SetupRootFS(driverConfig.FlakeRef, cfg.Name, cfg.AllocID, driverConfig.FlakeSha)
+	rootFSPath, mainStorePath, deps, err := d.SetupRootFS(driverConfig.FlakeRef, cfg.Name, cfg.AllocID, driverConfig.FlakeSha)
 	if err != nil {
 		return nil, nil, fmt.Errorf("Error in building rootfs from flake-ref %s: %v", driverConfig.FlakeRef, err)
 	}
 	containerConfig.RootFSPath = rootFSPath
+
+	for _, dep := range deps {
+		driverConfig.Mounts = append(driverConfig.Mounts, Mount{
+			Type:    "bind",
+			Target:  dep,
+			Source:  dep,
+			Options: []string{"bind", "ro"},
+		})
+	}
 
 	d.logger.Info(fmt.Sprintf("Successfully created rootfs from %s flake-ref\n", driverConfig.FlakeRef))
 
