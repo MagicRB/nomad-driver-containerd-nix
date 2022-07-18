@@ -32,14 +32,14 @@
                 ];
             }
         );
-        
+
         overlay = final: prev:
           {
             nomad-driver-containerd-nix = prev.buildGoModule
               { src = ./.;
                 pname = "nomad-driver-containerd-nix";
                 version = "latest";
-                vendorSha256 = "sha256-aKA15Qx4pDoPo4u4AOpQITyhKP/iUvWecg/IDpV6KgA=";
+                vendorSha256 = "sha256-+EniB8cZ2Jh4A/EdaLlFFhB69fD5ZzqEQ+Yw3M1qyfo=";
               };
           };
       };
