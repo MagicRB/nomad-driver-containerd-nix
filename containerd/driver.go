@@ -474,6 +474,7 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 
 	var err error
 	rootFSPath, mainStorePath, deps, err := SetupRootFS(d.config, driverConfig.FlakeRef, cfg.Name, cfg.AllocID, driverConfig.FlakeSha)
+
 	if err != nil {
 		return nil, nil, fmt.Errorf("Error in building rootfs from flake-ref %s: %v", driverConfig.FlakeRef, err)
 	}
@@ -683,6 +684,16 @@ func (d *Driver) StopTask(taskID string, timeout time.Duration, signal string) e
 
 	if err := handle.shutdown(d.ctxContainerd, timeout, syscall.SIGTERM); err != nil {
 		return fmt.Errorf("Shutdown failed: %v", err)
+	}
+
+	var driverConfig TaskConfig
+	if err := handle.taskConfig.DecodeDriverConfig(&driverConfig); err != nil {
+		return fmt.Errorf("failed to decode driver config: %v", err)
+	}
+
+	err := DestroyRootFS(d.config, &driverConfig, handle.taskConfig)
+	if err != nil {
+		return fmt.Errorf("Error in building rootfs from flake-ref %s: %v", driverConfig.FlakeRef, err)
 	}
 
 	return nil

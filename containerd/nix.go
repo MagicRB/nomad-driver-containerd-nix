@@ -2,7 +2,6 @@ package containerd
 
 import (
 	"fmt"
-	"syscall"
 	"os/exec"
 	"os"
 	"strings"
@@ -30,6 +29,7 @@ func NixGetDeps(executable string, flakeRef string) ([]string, error) {
 }
 
 func NixBuildFlake(executable string, flakeRef string, flakeSha string) error {
+
 	flakeHost := strings.Split(flakeRef, "#")
 
 	if len(flakeHost) != 2 {
@@ -121,16 +121,19 @@ func SetupRootFS(config *Config, flakeRef string, containerName string, allocati
 	}
 
 	err = NixBuildFlake(nixExecutable, flakeRef, flakeSha)
+
 	if err != nil {
 		return "", "", nil, err
 	}
 
 	deps, err := NixGetDeps(nixExecutable, flakeRef)
+
 	if err != nil {
 		return "", "", nil, err
 	}
 
 	rootFS := GetRootFSPath(config, containerName, allocationId)
+
 	os.MkdirAll(rootFS, 0755)
 
 	// for _, dep := range deps {
@@ -153,6 +156,7 @@ func SetupRootFS(config *Config, flakeRef string, containerName string, allocati
 	// }
 
 	storePath, err := NixGetStorePath(nixExecutable, flakeRef)
+
 	if err != nil {
 		return "", "", nil, err
 	}
@@ -167,15 +171,16 @@ func SetupRootFS(config *Config, flakeRef string, containerName string, allocati
 }
 
 func DestroyRootFS(config *Config, driverConfig *TaskConfig, taskConfig *drivers.TaskConfig) error {
-	nixExecutable, err := exec.LookPath("nix")
-	if err != nil {
-		return fmt.Errorf("failed to find `nix` executable")
-	}
+	// nixExecutable, err := exec.LookPath("nix")
+	// if err != nil {
+	// 	return fmt.Errorf("failed to find `nix` executable")
+	// }
 
-	deps, err := NixGetDeps(nixExecutable, driverConfig.FlakeRef)
-	if err != nil {
-		return err
-	}
+	// deps, err := NixGetDeps(nixExecutable, driverConfig.FlakeRef)
+
+	// if err != nil {
+	// 	return err
+	// }
 
 	rootFSPath := GetRootFSPath(config, taskConfig.Name, taskConfig.AllocID)
 
