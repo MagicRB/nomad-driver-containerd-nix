@@ -217,7 +217,7 @@ func (h *taskHandle) shutdown(ctxContainerd context.Context, timeout time.Durati
 	return h.task.Kill(ctxWithTimeout, syscall.SIGKILL)
 }
 
-func (h *taskHandle) cleanup(ctxContainerd context.Context) error {
+func (h *taskHandle) cleanup(config *Config, ctxContainerd context.Context) error {
 	ctxWithTimeout, cancel := context.WithTimeout(ctxContainerd, 30*time.Second)
 	defer cancel()
 
@@ -227,6 +227,17 @@ func (h *taskHandle) cleanup(ctxContainerd context.Context) error {
 	if err := h.container.Delete(ctxWithTimeout, containerd.WithSnapshotCleanup); err != nil {
 		return err
 	}
+
+	var driverConfig TaskConfig
+	if err := h.taskConfig.DecodeDriverConfig(&driverConfig); err != nil {
+		return fmt.Errorf("failed to decode driver config: %v", err)
+	}
+
+	err := DestroyRootFS(config, &driverConfig, h.taskConfig)
+	if err != nil {
+		return fmt.Errorf("Error in cleaning up rootfs from flake-ref %s: %v", driverConfig.FlakeRef, err)
+	}
+
 	return nil
 }
 

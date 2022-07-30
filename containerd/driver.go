@@ -473,7 +473,7 @@ func (d *Driver) StartTask(cfg *drivers.TaskConfig) (*drivers.TaskHandle, *drive
 	// }
 
 	var err error
-	rootFSPath, mainStorePath, deps, err := d.SetupRootFS(driverConfig.FlakeRef, cfg.Name, cfg.AllocID, driverConfig.FlakeSha)
+	rootFSPath, mainStorePath, deps, err := SetupRootFS(d.config, driverConfig.FlakeRef, cfg.Name, cfg.AllocID, driverConfig.FlakeSha)
 	if err != nil {
 		return nil, nil, fmt.Errorf("Error in building rootfs from flake-ref %s: %v", driverConfig.FlakeRef, err)
 	}
@@ -685,16 +685,6 @@ func (d *Driver) StopTask(taskID string, timeout time.Duration, signal string) e
 		return fmt.Errorf("Shutdown failed: %v", err)
 	}
 
-	var driverConfig TaskConfig
-	if err := handle.taskConfig.DecodeDriverConfig(&driverConfig); err != nil {
-		return fmt.Errorf("failed to decode driver config: %v", err)
-	}
-
-	err := d.DestroyRootFS(&driverConfig, handle.taskConfig)
-	if err != nil {
-		return fmt.Errorf("Error in building rootfs from flake-ref %s: %v", driverConfig.FlakeRef, err)
-	}
-
 	return nil
 }
 
@@ -714,7 +704,7 @@ func (d *Driver) DestroyTask(taskID string, force bool) error {
 		return fmt.Errorf("cannot destroy running task")
 	}
 
-	if err := handle.cleanup(d.ctxContainerd); err != nil {
+	if err := handle.cleanup(d.config, d.ctxContainerd); err != nil {
 		return err
 	}
 
@@ -725,7 +715,7 @@ func (d *Driver) DestroyTask(taskID string, force bool) error {
 		return fmt.Errorf("failed to decode driver config: %v", err)
 	}
 
-	err = d.DestroyRootFS(&driverConfig, handle.taskConfig)
+	err = DestroyRootFS(d.config, &driverConfig, handle.taskConfig)
 	if err != nil {
 		return fmt.Errorf("Error in building rootfs from flake-ref %s: %v", driverConfig.FlakeRef, err)
 	}

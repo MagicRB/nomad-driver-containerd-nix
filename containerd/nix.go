@@ -10,7 +10,7 @@ import (
 	"github.com/hashicorp/nomad/plugins/drivers"
 )
 
-func (d *Driver) NixGetDeps(executable string, flakeRef string) ([]string, error) {
+func NixGetDeps(executable string, flakeRef string) ([]string, error) {
 	nixDepsCmd := &exec.Cmd {
 		Path: executable,
 		Args: []string{
@@ -29,7 +29,7 @@ func (d *Driver) NixGetDeps(executable string, flakeRef string) ([]string, error
 	return deps, nil
 }
 
-func (d *Driver) NixBuildFlake(executable string, flakeRef string, flakeSha string) error {
+func NixBuildFlake(executable string, flakeRef string, flakeSha string) error {
 	flakeHost := strings.Split(flakeRef, "#")
 
 	if len(flakeHost) != 2 {
@@ -88,7 +88,7 @@ func (d *Driver) NixBuildFlake(executable string, flakeRef string, flakeSha stri
 	return nil
 }
 
-func (d *Driver) NixGetStorePath(executable string, flakeRef string) (string, error) {
+func NixGetStorePath(executable string, flakeRef string) (string, error) {
 	nixEvalCmd := exec.Cmd {
 		Path: executable,
 		Args: []string{
@@ -106,31 +106,31 @@ func (d *Driver) NixGetStorePath(executable string, flakeRef string) (string, er
 	return string(storePath), nil
 }
 
-func (d *Driver) GetGCRoot(containerName string, allocationId string) string {
-	return fmt.Sprintf("%s/%s-%s", d.config.GCRootsRoot, containerName, allocationId)
+func GetGCRoot(config *Config, containerName string, allocationId string) string {
+	return fmt.Sprintf("%s/%s-%s", config.GCRootsRoot, containerName, allocationId)
 }
 
-func (d *Driver) GetRootFSPath(containerName string, allocationId string) string {
-	return fmt.Sprintf("%s/%s-%s", d.config.RootFSRoot, containerName, allocationId)
+func GetRootFSPath(config *Config, containerName string, allocationId string) string {
+	return fmt.Sprintf("%s/%s-%s", config.RootFSRoot, containerName, allocationId)
 }
 
-func (d *Driver) SetupRootFS(flakeRef string, containerName string, allocationId string, flakeSha string) (string, string, []string, error) {
+func SetupRootFS(config *Config, flakeRef string, containerName string, allocationId string, flakeSha string) (string, string, []string, error) {
 	nixExecutable, err := exec.LookPath("nix")
 	if err != nil {
 		return "", "", nil, fmt.Errorf("failed to find `nix` executable")
 	}
 
-	err = d.NixBuildFlake(nixExecutable, flakeRef, flakeSha)
+	err = NixBuildFlake(nixExecutable, flakeRef, flakeSha)
 	if err != nil {
 		return "", "", nil, err
 	}
 
-	deps, err := d.NixGetDeps(nixExecutable, flakeRef)
+	deps, err := NixGetDeps(nixExecutable, flakeRef)
 	if err != nil {
 		return "", "", nil, err
 	}
 
-	rootFS := d.GetRootFSPath(containerName, allocationId)
+	rootFS := GetRootFSPath(config, containerName, allocationId)
 	os.MkdirAll(rootFS, 0755)
 
 	// for _, dep := range deps {
@@ -152,44 +152,44 @@ func (d *Driver) SetupRootFS(flakeRef string, containerName string, allocationId
 	// 	}
 	// }
 
-	storePath, err := d.NixGetStorePath(nixExecutable, flakeRef)
+	storePath, err := NixGetStorePath(nixExecutable, flakeRef)
 	if err != nil {
 		return "", "", nil, err
 	}
 
 	// Create GC-Root
-	gcRoot := d.GetGCRoot(containerName, allocationId)
-	os.MkdirAll(d.config.GCRootsRoot, 0755)
+	gcRoot := GetGCRoot(config, containerName, allocationId)
+	os.MkdirAll(config.GCRootsRoot, 0755)
 
 	os.Symlink(storePath, gcRoot)
 
 	return rootFS, deps[len(deps)-1], deps, nil
 }
 
-func (d *Driver) DestroyRootFS(driverConfig *TaskConfig, taskConfig *drivers.TaskConfig) error {
+func DestroyRootFS(config *Config, driverConfig *TaskConfig, taskConfig *drivers.TaskConfig) error {
 	nixExecutable, err := exec.LookPath("nix")
 	if err != nil {
 		return fmt.Errorf("failed to find `nix` executable")
 	}
 
-	deps, err := d.NixGetDeps(nixExecutable, driverConfig.FlakeRef)
+	deps, err := NixGetDeps(nixExecutable, driverConfig.FlakeRef)
 	if err != nil {
 		return err
 	}
 
-	rootFSPath := d.GetRootFSPath(taskConfig.Name, taskConfig.AllocID)
+	rootFSPath := GetRootFSPath(config, taskConfig.Name, taskConfig.AllocID)
 
-	for _, dep := range deps {
-		err := syscall.Unmount(rootFSPath + "/" + dep, 0)
-		if err != nil {
-			return err
-		}
-	}
+	// for _, dep := range deps {
+	// 	err := syscall.Unmount(rootFSPath + "/" + dep, 0)
+	// 	if err != nil {
+	// 		return err
+	// 	}
+	// }
 
 
 	os.RemoveAll(rootFSPath)
 
-	gcRoot := d.GetGCRoot(taskConfig.Name, taskConfig.AllocID)
+	gcRoot := GetGCRoot(config, taskConfig.Name, taskConfig.AllocID)
 
 	os.Remove(gcRoot)
 
