@@ -39,7 +39,7 @@
               { src = ./.;
                 pname = "nomad-driver-containerd-nix";
                 version = "latest";
-                vendorSha256 = "sha256-+EniB8cZ2Jh4A/EdaLlFFhB69fD5ZzqEQ+Yw3M1qyfo=";
+                vendorSha256 = "sha256-G46p2/HtuK28n5JV0Q5u/PQyNFHi3dphO72eItRRRd8=";
               };
           };
       };
